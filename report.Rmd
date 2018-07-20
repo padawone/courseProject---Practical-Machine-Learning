@@ -1,0 +1,205 @@
+---
+title: "Practical Machine Learning"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise.
+
+##Data Preprocessing
+
+**Loading libraries needed for project development.**
+
+```{r loading, include=TRUE}
+
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(rattle)
+
+
+```
+
+**Download data for project, from sources designed on instructions.**
+
+```{r download data, include=TRUE}
+
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile=trainFile, method="curl")
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile=testFile, method="curl")
+}
+
+```
+
+**Reading and cleaning data before do any task.**
+
+```{r reading , include=TRUE}
+
+
+trainRaw <- read.csv("./data/pml-training.csv")
+testRaw <- read.csv("./data/pml-testing.csv")
+
+dim(trainRaw)
+dim(testRaw)
+str(trainRaw)
+str(testRaw)
+
+
+```
+
+The training data set is made of 19622 observations on 160 columns. The test data set is made of 20 observations on 160 columns too.
+At first sight too many columns have NA values or blank values on almost every observation, this is why is mandatory to remove them . The first seven columns give information about the people who did the test, and also timestamps. We will not take into consideration to build the model.
+
+
+```{r cleaning data,include=TRUE}
+
+# First, calculate columns with more than 90% of NA / Missing Values, also for test set.
+
+indexColsRemove <- which(colSums(is.na(trainRaw) |trainRaw=="")>0.9*dim(trainRaw)[1]) 
+TrainDataClean <- trainRaw[,-indexColsRemove]
+
+# Second exclude first 7 cols because are not important for model building.
+
+TrainDataClean <- TrainDataClean[,-c(1:7)]
+dim(TrainDataClean)
+
+# Same for Test Set.
+
+indexColsRemove <- which(colSums(is.na(testRaw) |testRaw=="")>0.9*dim(testRaw)[1]) 
+TestDataClean <- testRaw[,-indexColsRemove]
+TestDataClean <- TestDataClean[,-1]
+dim(TestDataClean)
+
+
+```
+
+#Model Creation
+
+```{r model creation,include=TRUE}
+
+#Partition of Training Data Set for model creation  in two parts 75% and 25%.
+
+set.seed(12345)
+inTrain1 <- createDataPartition(TrainDataClean$classe, p=0.75, list=FALSE)
+TrainSet <- TrainDataClean[inTrain1,]
+TestSet <- TrainDataClean[-inTrain1,]
+dim(TrainSet)
+
+#Model with Classification Tree
+
+trainingControl <- trainControl(method="cv", number=5)
+
+ClassificationTree_Model <- train(classe~., data=TrainSet, method="rpart", trControl=trainingControl)
+
+fancyRpartPlot(ClassificationTree_Model$finalModel)
+
+
+trainPrediction_CT <- predict(ClassificationTree_Model,newdata=TestSet)
+confussionMatrixCTModel <- confusionMatrix(TestSet$classe,trainPrediction_CT)
+
+confussionMatrixCTModel$table
+confussionMatrixCTModel$overall[1]
+
+
+
+```
+
+
+Accuracy with Classification Tree model is `r confussionMatrixCTModel$overall[1]`, so is clear that is more or less like flip a coin to make a prediction.
+In this case is clear that is needed build another prediction models with best accuracy.
+
+
+```{r model with gradient boosting}
+
+#Model with Gradient Boosting
+
+GBM_Model  <- train(classe ~ ., data=TrainSet, method = "gbm",trControl = trainingControl,verbose=FALSE)
+
+plot(GBM_Model)
+
+trainPrediction_GBM<- predict(GBM_Model,newdata=TestSet)
+confussionMatrixGBMModel <- confusionMatrix(TestSet$classe,trainPrediction_GBM)
+
+confussionMatrixGBMModel$table
+confussionMatrixGBMModel$overall[1]
+
+
+
+```
+
+Accuracy with gradient boosting model is `r confussionMatrixGBMModel$overall[1]`
+
+```{r model random forest,include=TRUE}
+
+#Model with Random Forest
+
+RandomForest_Model <- train(classe ~ ., data=TrainSet, method="rf", trControl=trainingControl, ntree=250,verbose=FALSE)
+
+
+print(RandomForest_Model)
+plot(RandomForest_Model,main="Accuracy of Random forest model by number of predictors")
+
+trainPrediction_RF <- predict(RandomForest_Model,newdata=TestSet)
+confussionMatrixRFModel <- confusionMatrix(TestSet$classe,trainPrediction_RF)
+
+
+confussionMatrixRFModel$table
+confussionMatrixRFModel$overall[1]
+
+names(RandomForest_Model$finalModel)
+RandomForest_Model$finalModel$classes
+
+
+plot(RandomForest_Model$finalModel,main="Model error of Random forest model by number of trees")
+
+
+Variables_Significancy <- varImp(RandomForest_Model)
+Variables_Significancy
+
+```
+
+
+Accuracy with random forest model is `r confussionMatrixRFModel$overall[1]`
+
+#Conclusions
+
+Based in previous accuracy values, is clear that best models are GBM and Random Forest.
+With random forest, model reach an accuracy of `r confussionMatrixRFModel$overall[1]` using Cross-Validation method with 5 folds - steps, so is the best model to do final prediction.
+
+The optimal number of predictors is 27. There is no significal increase of the accuracy with 2 predictors and 27, but the slope decreases more with more than 27 predictors (even if the accuracy remains very good). The fact that not all the accuracy is worse using all the available predictors suggest that maybe exists some dependencies between them.
+
+**Final Prediction for 20 Test Cases.**
+
+```{r Final Prediction ,include=TRUE}
+
+Final_Prediction <- predict(RandomForest_Model,newdata=TestDataClean)
+
+```
+
+Results for final prediction:
+
+`r Final_Prediction`
+
